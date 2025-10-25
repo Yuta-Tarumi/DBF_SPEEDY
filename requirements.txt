@@ -59,6 +59,7 @@ pyarrow==20.0.0
 pydantic==2.11.3
 pydantic_core==2.33.1
 Pygments==2.19.1
+pykdtree==1.4.3
 pyparsing==3.2.3
 pyproj==3.7.1
 pyshp==2.3.1
