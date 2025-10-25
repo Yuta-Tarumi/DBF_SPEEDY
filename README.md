@@ -1,3 +1,25 @@
 # DBF_SPEEDY
 Deep Bayesian Filter (https://arxiv.org/abs/2405.18674) applied for an intermediate-level complexity atmospheric circulation model SPEEDY. 
 The code assumes that the training and test data are already created in storage. For data generation, please see **pySPEEDY_data_generation** repository.
+
+## Example analysis
+
+To reproduce the example analysis included in this repository, follow these steps:
+
+1. Download the provided test data archives and unzip them into the repository.
+2. Install the Python dependencies listed in `requirements.txt` (for example, with `pip install -r requirements.txt`).
+3. Add the `DBF_SPEEDY` directory to your `PYTHONPATH` so the analysis scripts can import project modules.
+4. Run the analysis script:
+
+   ```bash
+   python analyze/test_inference.py \
+     --config config/decoder_transformer_dim2048_sparsest_Gaussian.yaml \
+     --checkpoint trained_weight/model_dim2048.pt \
+     --data-root test_data \
+     --mean-root data_mean \
+     --index-json index_test1.json \
+     --device cuda \
+     --rmse-dir test_rmse
+   ```
+
+   Adjust the `--device` argument if you prefer to run on CPU or a different CUDA device.
