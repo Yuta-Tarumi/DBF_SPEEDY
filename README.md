@@ -23,3 +23,8 @@ To reproduce the example analysis included in this repository, follow these step
    ```
 
    Adjust the `--device` argument if you prefer to run on CPU or a different CUDA device.
+
+### Inference example
+
+The example below summarises the filtered state produced by the analysis script, alongside the target fields and observations for the same sample.
+![Inference example](images/v_level3_batch0000_sample0000_time19.png)
