@@ -1,0 +1,76 @@
+[general]
+seed = 0
+device = cuda:7
+
+[train]
+batch_size = 32 # Could be larger in terms of gpu memory, but it gets slower in this experiment because we create the training data on-the-fly on cpu
+num_workers = 0
+epochs = 1
+show_progress = True
+val_output_dir = Lorenz96_output
+
+[dataset]
+_target_ = DBF.dataset.Lorenz96.Lorenz96Dataset
+num_samples = 320000 # should be larger if you have computational resources
+
+[dataset.config]
+_target_ = DBF.dataset.Lorenz96.Lorenz96Config
+state_dim = 40
+forcing = 8.0
+dt = 0.05
+integration_steps = 1
+seq_length = 50
+burn_in = 50
+obs_noise_std = 0.1
+obs_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+initial_mean = 0.0
+initial_std = 1.0
+seed = 1
+
+[validation_dataset]
+_target_ = DBF.dataset.Lorenz96.Lorenz96Dataset
+num_samples = 256
+
+[validation_dataset.config]
+_target_ = DBF.dataset.Lorenz96.Lorenz96Config
+state_dim = 40
+forcing = 8.0
+dt = 0.05
+integration_steps = 1
+seq_length = 50
+burn_in = 100
+obs_noise_std = 0.1
+obs_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+initial_mean = 0.0
+initial_std = 1.0
+seed = 10000000
+
+[model.encoder]
+_target_ = DBF.model.Lorenz96.Conv1DEncoder
+input_dim = 40
+latent_dim = 512
+hidden_channels = 128
+
+[model.decoder]
+_target_ = DBF.model.Lorenz96.Conv1DDecoder
+latent_dim = 512 
+output_dim = 40
+hidden_channels = 128
+
+[model.filter]
+_target_ = DBF.model.Lorenz96.Lorenz96DBF
+latent_dim = 512
+obs_dim = 40
+model_seed = 0
+q_distribution = "Gaussian"
+init_cov = 5.0
+
+[optimizer]
+_target_ = torch.optim.Adam
+lr = 1e-3
+weight_decay = 0.0
+
+[scheduler]
+_target_ = torch.optim.lr_scheduler.StepLR
+step_size = 50
+gamma = 1.0 # no decay
