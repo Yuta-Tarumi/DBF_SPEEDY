@@ -6,13 +6,13 @@ The code assumes that the training and test data are already created in storage.
 
 For a lightweight, self-contained demonstration of the Deep Bayesian Filter, the repository includes a Lorenz-96 setup that generates trajectories on the fly. The example uses simple 1D-convolutional encoder/decoder modules and does **not** require any pre-generated datasets.
 
-Run a short training session with the default configuration:
+Run a training session with the default configuration:
 
 ```bash
 python train_lorenz96.py --config config/lorenz96_example.yaml
 ```
 
-The configuration file illustrates how to compose experiments from modular dataset, encoder, decoder, and filter definitions. You can adjust sequence length, integration step size, network widths, and optimisation hyperparameters directly in the config file. Validation runs every `val_interval` training iterations (100 by default); tune this value in the `[train]` section to change how frequently metrics— including the reported RMSE between reconstructions and targets—appear in stdout.
+The configuration file illustrates how to compose experiments from modular dataset, encoder, decoder, and filter definitions. You can adjust latent dimensions, neural network architectures, sequence length, and optimisation hyperparameters directly in the config file. Validation runs every `val_interval` training iterations (100 by default); tune this value in the `[train]` section to change how frequently metrics— including the reported RMSE between reconstructions and targets—appear in stdout.
 
 ![Inference example](example_Lorenz.png)
 
