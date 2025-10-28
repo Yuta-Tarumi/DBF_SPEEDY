@@ -67,7 +67,7 @@ init_cov = 1.0
 
 [optimizer]
 _target_ = torch.optim.Adam
-lr = 3e-4
+lr = 1e-4
 weight_decay = 0.0
 
 [scheduler]
