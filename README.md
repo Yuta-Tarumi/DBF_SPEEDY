@@ -9,10 +9,11 @@ For a lightweight, self-contained demonstration of the Deep Bayesian Filter, the
 Run a training session with the default configuration:
 
 ```bash
-python train_lorenz96.py --config config/lorenz96_example.yaml
+python train_lorenz96.py --config config/lorenz96_linearobs.yaml
+python train_lorenz96.py --config config/lorenz96_nonlinearobs.yaml
 ```
 
-The configuration file illustrates how to compose experiments from modular dataset, encoder, decoder, and filter definitions. You can adjust latent dimensions, neural network architectures, sequence length, and optimisation hyperparameters directly in the config file. Validation runs every `val_interval` training iterations (100 by default); tune this value in the `[train]` section to change how frequently metrics— including the reported RMSE between reconstructions and targets—appear in stdout.
+The configuration file illustrates how to compose experiments from modular dataset, encoder, decoder, and filter definitions. You can adjust latent dimensions, neural network architectures, sequence length, and optimisation hyperparameters directly in the config file. Validation runs every `val_interval` training iterations (1000 by default); tune this value in the `[train]` section to change how frequently metrics— including the reported RMSE between reconstructions and targets—appear in stdout.
 
 ![Inference example](example_Lorenz.png)
 
