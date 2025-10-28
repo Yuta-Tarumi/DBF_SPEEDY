@@ -15,7 +15,8 @@ python train_lorenz96.py --config config/lorenz96_nonlinearobs.yaml
 
 The configuration file illustrates how to compose experiments from modular dataset, encoder, decoder, and filter definitions. You can adjust latent dimensions, neural network architectures, sequence length, and optimisation hyperparameters directly in the config file. Validation runs every `val_interval` training iterations (1000 by default); tune this value in the `[train]` section to change how frequently metrics— including the reported RMSE between reconstructions and targets—appear in stdout.
 
-![Inference example](example_Lorenz.png)
+![Inference example](figure/example_Lorenz_linear.png)
+![Inference example](figure/example_Lorenz_nonlinear.png)
 
 ## Example analysis
 
@@ -42,4 +43,4 @@ To reproduce the example analysis included in this repository, follow these step
 ### Inference example
 
 The example below summarises the filtered state produced by the analysis script, alongside the target fields and observations for the same sample.
-![Inference example](v_level3_batch0000_sample0000_time19.png)
+![Inference example](figure/v_level3_batch0000_sample0000_time19.png)
