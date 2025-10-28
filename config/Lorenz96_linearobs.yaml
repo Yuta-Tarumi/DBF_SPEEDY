@@ -7,12 +7,12 @@ batch_size = 64 # Could be larger in terms of gpu memory, but it gets slower in 
 num_workers = 16
 epochs = 1
 show_progress = True
-val_interval = 100
-val_output_dir = Lorenz96_output
+val_interval = 1000
+val_output_dir = Lorenz96_linearobs_output
 
 [dataset]
 _target_ = DBF.dataset.Lorenz96.Lorenz96Dataset
-num_samples = 2560000 # should be larger if you have computational resources
+num_samples = 320000 # should be larger if you have computational resources
 
 [dataset.config]
 _target_ = DBF.dataset.Lorenz96.Lorenz96Config
@@ -22,6 +22,7 @@ dt = 0.05
 integration_steps = 1
 seq_length = 50
 burn_in = 20
+obs_op = linear
 obs_noise_std = 0.1
 obs_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
 initial_mean = 0.0
@@ -44,19 +45,19 @@ obs_noise_std = 0.1
 obs_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
 initial_mean = 0.0
 initial_std = 5.0
-seed = 10000000
+seed = 100000000
 
 [model.encoder]
 _target_ = DBF.model.Lorenz96.Conv1DEncoder
 input_dim = 40
 latent_dim = 256
-hidden_channels = 256
+hidden_channels = 128
 
 [model.decoder]
 _target_ = DBF.model.Lorenz96.Conv1DDecoder
 latent_dim = 256
 output_dim = 40
-hidden_channels = 256
+hidden_channels = 128
 
 [model.filter]
 _target_ = DBF.model.Lorenz96.Lorenz96DBF

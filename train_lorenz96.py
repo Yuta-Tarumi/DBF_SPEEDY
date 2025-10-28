@@ -229,7 +229,26 @@ def train(config: Dict[str, Any]) -> None:
             leave=False,
             disable=not show_progress,
         )
-        evaluated_this_epoch = False
+        val_metrics = run_validation(
+            model=model,
+            val_loader=val_loader,
+            device=device,
+            show_progress=show_progress,
+            epoch=epoch,
+            global_step=global_step,
+            val_output_dir=val_output_dir,
+        )
+        last_val_metrics = val_metrics
+        print(
+            json.dumps(
+                {
+                    "epoch": epoch,
+                    "iteration": global_step,
+                    "validation": {k: float(v) for k, v in val_metrics.items()},
+                }
+            )
+        )
+        evaluated_this_epoch = True
         for batch in train_iter:
             obs, target = batch
             obs = obs.to(device)
@@ -237,6 +256,7 @@ def train(config: Dict[str, Any]) -> None:
             optimizer.zero_grad()
             loss, loss_kl, loss_integral = model(obs, target)
             loss.backward()
+            torch.nn.utils.clip_grad_norm(model.parameters(), 1.0)
             optimizer.step()
 
             current_metrics = {

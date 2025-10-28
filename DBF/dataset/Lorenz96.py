@@ -37,6 +37,7 @@ class Lorenz96Config:
     seq_length: int = 50
     burn_in: int = 100
     obs_noise_std: float = 1.0
+    obs_op: str = "linear"
     obs_indices: Optional[Sequence[int]] = None
     initial_mean: float = 0.0
     initial_std: float = 1.0
@@ -74,12 +75,18 @@ class Lorenz96Dataset(Dataset):
             for _ in range(cfg.integration_steps):
                 x = _rk4_step(x, dt, cfg.forcing)
             states[t] = x.astype(np.float32, copy=True)
-        observations = np.minimum(np.power(states[:, self._obs_indices], 4, dtype=np.float32), 10.0)
+        if cfg.obs_op == "linear":
+            observations = states[:, self._obs_indices]
+        elif cfg.obs_op == "nonlinear":
+            observations = np.minimum(np.power(states[:, self._obs_indices], 4, dtype=np.float32), 10.0)
         #print(f"{observations.shape=}")
         if cfg.obs_noise_std > 0:
             observations = observations + rng.normal(
                 0.0, cfg.obs_noise_std, size=observations.shape
             ).astype(np.float32)
+        if np.max(abs(states)) > 30: # something wrong during the integration
+            states = np.zeros((cfg.seq_length, cfg.state_dim), dtype=np.float32)
+            observations = np.zeros((cfg.seq_length, cfg.state_dim), dtype=np.float32)
         return observations.astype(np.float32), states
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:

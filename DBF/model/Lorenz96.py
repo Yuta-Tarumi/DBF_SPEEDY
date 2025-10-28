@@ -152,10 +152,10 @@ class Lorenz96DBF(nn.Module):
         self.num_blocks = latent_dim // 2
         print(f"{self.num_blocks=}")
         self.lambdas = nn.Parameter(0.01 * torch.randn(latent_dim))
-        self.log_Q = torch.tensor(-2.0, device="cuda:7")
-        #self.log_R = torch.tensor(0.0, device="cuda:7")
+        self.log_Q = torch.tensor(-4.0, device=device)
+        #self.log_R = torch.tensor(0.0, device=device)
         #self.log_Q = nn.Parameter(torch.tensor(0.0))
-        self.log_R = nn.Parameter(torch.full((obs_dim,), 1.5))
+        self.log_R = nn.Parameter(torch.full((obs_dim,), 0.0))
 
         init_sigma = init_cov * torch.eye(2)
         self.register_buffer("init_mu", torch.zeros(self.num_blocks, 2))
