@@ -12,22 +12,63 @@ from .dbf import (
     kl_divergence_gaussians,
     sample_gaussian,
 )
+from einops import rearrange
+
+class ResidualConvBlock(nn.Module):
+    """Residual 1D convolutional block with skip connections and LayerNorm."""
+
+    def __init__(
+        self,
+        channels: int,
+        kernel_size: int = 5,
+        padding_mode: str = "circular",
+    ) -> None:
+        super().__init__()
+        padding = kernel_size // 2
+        self.conv1 = nn.Conv1d(
+            channels,
+            channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            padding_mode=padding_mode,
+        )
+        self.norm1 = nn.LayerNorm(40)#ChannelLayerNorm1d(channels)
+        self.act = nn.GELU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        out = self.act(self.conv1(self.norm1(x)))
+        return self.act(out) + residual
 
 
 class Conv1DEncoder(nn.Module):
-    """Map observations to the posterior natural parameters."""
+    """Map observations to the posterior natural parameters with residual blocks."""
 
-    def __init__(self, input_dim: int, latent_dim: int, hidden_channels: int = 32) -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        latent_dim: int,
+        hidden_channels: int = 64,
+        num_blocks: int = 8,
+    ) -> None:
         super().__init__()
-        layers = [
-            nn.Conv1d(1, hidden_channels, kernel_size=3, padding=1, padding_mode='circular'),
-            nn.ReLU(),
-            nn.Conv1d(hidden_channels, hidden_channels, kernel_size=3, padding=1, padding_mode='circular'),
-            nn.ReLU(),
-            nn.Conv1d(hidden_channels, 2 * latent_dim, kernel_size=1, padding_mode='circular'),
-            nn.AdaptiveAvgPool1d(1),
-        ]
-        self.net = nn.Sequential(*layers)
+        self.stem = nn.Sequential(
+            nn.Conv1d(
+                1,
+                hidden_channels,
+                kernel_size=5,
+                padding=2,
+                padding_mode="circular",
+            ),
+            nn.GELU(),
+        )
+        self.blocks = nn.ModuleList(
+            ResidualConvBlock(hidden_channels, kernel_size=5) for _ in range(num_blocks)
+        )
+        self.head = nn.Sequential(
+            nn.GELU(),
+            nn.Linear(hidden_channels * 40, 2 * latent_dim),
+        )
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
@@ -38,26 +79,50 @@ class Conv1DEncoder(nn.Module):
                 f"Expected input dimension {self.input_dim}, received {x.shape[-1]}"
             )
         x = x.unsqueeze(1)
-        out = self.net(x)
+        x = self.stem(x)
+        for block in self.blocks:
+            x = block(x)
+            #print(f"{x.shape=}")
+        x = rearrange(x, "b t h -> b (t h)")
+        out = self.head(x)
+        #print(f"{out.shape=}")
         return out.squeeze(-1)
 
 
 class Conv1DDecoder(nn.Module):
-    """Decode latent states back to the physical space."""
+    """Decode latent states back to the physical space with residual refinement."""
 
-    def __init__(self, latent_dim: int, output_dim: int, hidden_channels: int = 32) -> None:
+    def __init__(
+        self,
+        latent_dim: int,
+        output_dim: int,
+        hidden_channels: int = 64,
+        num_blocks: int = 4,
+    ) -> None:
         super().__init__()
-        self.net = nn.Sequential(
-            nn.ConvTranspose1d(latent_dim, hidden_channels, kernel_size=output_dim),
-            nn.ReLU(),
-            nn.Conv1d(hidden_channels, 1, kernel_size=1, padding_mode='circular'),
-        )
         self.output_dim = output_dim
+        self.hidden_channels = hidden_channels
+        self.input_proj = nn.Sequential(
+            nn.Linear(latent_dim, hidden_channels * output_dim),
+            nn.GELU(),
+            nn.Linear(hidden_channels * output_dim, hidden_channels * output_dim),
+        )
+        self.blocks = nn.ModuleList(
+            ResidualConvBlock(hidden_channels, kernel_size=5) for _ in range(num_blocks)
+        )
+        self.head = nn.Sequential(
+            #ChannelLayerNorm1d(hidden_channels),
+            nn.GELU(),
+            nn.Conv1d(hidden_channels, 1, kernel_size=1),
+        )
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         # z: (batch, latent_dim)
-        z = z.unsqueeze(-1)
-        out = self.net(z)
+        out = self.input_proj(z)
+        out = out.view(z.shape[0], self.hidden_channels, self.output_dim)
+        for block in self.blocks:
+            out = block(out)
+        out = self.head(out)
         return out.squeeze(1)
 
 
@@ -71,7 +136,6 @@ class Lorenz96DBF(nn.Module):
         encoder: nn.Module,
         decoder: nn.Module,
         model_seed: int = 0,
-        q_distribution: str = "Gaussian",
         init_cov: float = 10.0,
         device: str | torch.device = "cpu",
     ) -> None:
@@ -82,14 +146,16 @@ class Lorenz96DBF(nn.Module):
         self.obs_dim = obs_dim
         self.encoder = encoder
         self.decoder = decoder
-        self.q_distribution = q_distribution
         self.device = torch.device(device)
 
         torch.manual_seed(model_seed)
         self.num_blocks = latent_dim // 2
+        print(f"{self.num_blocks=}")
         self.lambdas = nn.Parameter(0.01 * torch.randn(latent_dim))
-        self.log_Q = nn.Parameter(torch.tensor(0.0))
-        self.log_R = nn.Parameter(torch.full((obs_dim,), -1.0))
+        self.log_Q = torch.tensor(-2.0, device="cuda:7")
+        #self.log_R = torch.tensor(0.0, device="cuda:7")
+        #self.log_Q = nn.Parameter(torch.tensor(0.0))
+        self.log_R = nn.Parameter(torch.full((obs_dim,), 1.5))
 
         init_sigma = init_cov * torch.eye(2)
         self.register_buffer("init_mu", torch.zeros(self.num_blocks, 2))
@@ -133,12 +199,14 @@ class Lorenz96DBF(nn.Module):
         A_block = compute_K_sigma_block_diag(self.lambdas, num_real=0, num_complex=self.num_blocks).to(device)
         Q_tensor = torch.exp(self.log_Q) * torch.eye(2, device=device)
 
-        obs_flat = obs_seq.reshape(batch_size * T, -1)
+        obs_flat = rearrange(obs_seq, "b t y -> (b t) y")
         enc_out = self.encoder(obs_flat)
-        enc_out = enc_out.view(batch_size, T, self.latent_dim * 2)
+        enc_out = rearrange(enc_out, "(b t) y -> b t y", t=T)#.view(batch_size, T, self.latent_dim * 2)
         f_enc_all = enc_out[:, :, : self.latent_dim].view(batch_size, T, self.num_blocks, 2)
         g_raw = enc_out[:, :, self.latent_dim :].view(batch_size, T, self.num_blocks, 2)
-        g_enc_all = torch.tanh(g_raw.pow(2))
+        maximum_g = 100
+        g_enc_all = maximum_g*torch.tanh(g_raw**2/maximum_g)
+        #print(f"{torch.max(g_enc_all)=}, {torch.median(g_enc_all)=}, {torch.min(g_enc_all)=}")
         gf_all = g_enc_all * f_enc_all
 
         for t in range(T):
@@ -194,6 +262,7 @@ class Lorenz96DBF(nn.Module):
         samples_flat = samples.reshape(-1, self.latent_dim)
         recon_flat = self.decoder(samples_flat)
         recon = recon_flat.view(target.shape)
+        #print(f"{torch.max(recon)=}, {torch.min(recon)=}")
         log_std = self.log_R.view(1, 1, -1)
         var = torch.exp(2 * log_std)
         diff = target - recon

@@ -5,8 +5,9 @@ import argparse
 import ast
 import importlib
 import json
+import math
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
@@ -89,6 +90,92 @@ def _configparser_to_dict(config_parser) -> Dict[str, Any]:
     return config
 
 
+def run_validation(
+    *,
+    model: torch.nn.Module,
+    val_loader: DataLoader,
+    device: torch.device,
+    show_progress: bool,
+    epoch: int,
+    global_step: int,
+    val_output_dir: Optional[Path],
+) -> Dict[str, float]:
+    """Evaluate the model and optionally persist validation outputs."""
+
+    was_training = model.training
+    model.eval()
+
+    val_running = {"loss": 0.0, "kl": 0.0, "likelihood": 0.0}
+    total_squared_error = 0.0
+    total_elements = 0
+
+    epoch_output_dir = None
+    if val_output_dir is not None:
+        epoch_output_dir = val_output_dir / f"epoch_{epoch:03d}_step_{global_step:06d}"
+        epoch_output_dir.mkdir(parents=True, exist_ok=True)
+
+    val_iter = tqdm(
+        val_loader,
+        desc=f"Epoch {epoch} step {global_step} [val]",
+        leave=False,
+        disable=not show_progress,
+    )
+
+    with torch.no_grad():
+        for batch_idx, (obs, target) in enumerate(val_iter):
+            obs = obs.to(device)
+            target = target.to(device)
+
+            loss, loss_kl, loss_integral, recon = model(
+                obs, target, return_reconstruction=True
+            )
+
+            diff = recon - target
+            squared_error = diff.pow(2)
+            total_squared_error += squared_error.sum().item()
+            total_elements += squared_error.numel()
+            batch_rmse = torch.sqrt(squared_error.mean()).item()
+
+            current_val_metrics = {
+                "loss": loss.item(),
+                "kl": loss_kl.item(),
+                "likelihood": loss_integral.item(),
+                "rmse": batch_rmse,
+            }
+
+            val_running["loss"] += current_val_metrics["loss"] * obs.size(0)
+            val_running["kl"] += current_val_metrics["kl"] * obs.size(0)
+            val_running["likelihood"] += current_val_metrics["likelihood"] * obs.size(0)
+
+            if show_progress:
+                val_iter.set_postfix({k: f"{v:.4f}" for k, v in current_val_metrics.items()})
+
+            if epoch_output_dir is not None:
+                batch_path = epoch_output_dir / f"batch_{batch_idx:04d}.pt"
+                torch.save(
+                    {
+                        "observations": obs.detach().cpu(),
+                        "targets": target.detach().cpu(),
+                        "reconstruction": recon.detach().cpu(),
+                    },
+                    batch_path,
+                )
+
+    val_samples = len(val_loader.dataset)
+    aggregated = {k: v / val_samples for k, v in val_running.items()}
+    if total_elements > 0:
+        aggregated["rmse"] = math.sqrt(total_squared_error / total_elements)
+    else:
+        aggregated["rmse"] = float("nan")
+
+    if was_training:
+        model.train()
+    else:
+        model.eval()
+
+    return aggregated
+
+
 def train(config: Dict[str, Any]) -> None:
     seed = config.get("seed", 0)
     set_seed(seed)
@@ -103,6 +190,7 @@ def train(config: Dict[str, Any]) -> None:
     val_output_dir = Path(val_output_dir_cfg).expanduser() if val_output_dir_cfg else None
     if val_output_dir is not None:
         val_output_dir.mkdir(parents=True, exist_ok=True)
+    val_interval = int(train_settings.get("val_interval", 100))
 
     dataset = instantiate(config["dataset"])
     train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -129,6 +217,9 @@ def train(config: Dict[str, Any]) -> None:
     optimizer = instantiate_optimizer(config["optimizer"], model.parameters())
     scheduler = maybe_instantiate_scheduler(config.get("scheduler"), optimizer)
 
+    global_step = 0
+    last_val_metrics: Dict[str, float] | None = None
+
     for epoch in range(1, epochs + 1):
         model.train()
         running = {"loss": 0.0, "kl": 0.0, "likelihood": 0.0}
@@ -138,6 +229,7 @@ def train(config: Dict[str, Any]) -> None:
             leave=False,
             disable=not show_progress,
         )
+        evaluated_this_epoch = False
         for batch in train_iter:
             obs, target = batch
             obs = obs.to(device)
@@ -151,6 +243,7 @@ def train(config: Dict[str, Any]) -> None:
                 "loss": loss.item(),
                 "kl": loss_kl.item(),
                 "likelihood": loss_integral.item(),
+                "log_R": torch.mean(model.log_R)
             }
             running["loss"] += current_metrics["loss"] * obs.size(0)
             running["kl"] += current_metrics["kl"] * obs.size(0)
@@ -158,6 +251,36 @@ def train(config: Dict[str, Any]) -> None:
 
             if show_progress:
                 train_iter.set_postfix({k: f"{v:.4f}" for k, v in current_metrics.items()})
+
+            global_step += 1
+
+            if (
+                val_loader is not None
+                and val_interval > 0
+                and global_step % val_interval == 0
+            ):
+                evaluated_this_epoch = True
+                if show_progress:
+                    train_iter.write(f"Running validation at step {global_step}...")
+                val_metrics = run_validation(
+                    model=model,
+                    val_loader=val_loader,
+                    device=device,
+                    show_progress=show_progress,
+                    epoch=epoch,
+                    global_step=global_step,
+                    val_output_dir=val_output_dir,
+                )
+                last_val_metrics = val_metrics
+                print(
+                    json.dumps(
+                        {
+                            "epoch": epoch,
+                            "iteration": global_step,
+                            "validation": {k: float(v) for k, v in val_metrics.items()},
+                        }
+                    )
+                )
 
         if scheduler is not None:
             scheduler.step()
@@ -169,57 +292,35 @@ def train(config: Dict[str, Any]) -> None:
             "train": epoch_metrics,
         }
 
-        if val_loader is not None:
-            model.eval()
-            val_running = {"loss": 0.0, "kl": 0.0, "likelihood": 0.0}
-            epoch_output_dir = None
-            if val_output_dir is not None:
-                epoch_output_dir = val_output_dir / f"epoch_{epoch:03d}"
-                epoch_output_dir.mkdir(parents=True, exist_ok=True)
-            val_iter = tqdm(
-                val_loader,
-                desc=f"Epoch {epoch}/{epochs} [val]",
-                leave=False,
-                disable=not show_progress,
+        if (
+            val_loader is not None
+            and not evaluated_this_epoch
+            and val_interval > 0
+        ):
+            if show_progress:
+                print(f"Running end-of-epoch validation for epoch {epoch}...")
+            val_metrics = run_validation(
+                model=model,
+                val_loader=val_loader,
+                device=device,
+                show_progress=show_progress,
+                epoch=epoch,
+                global_step=global_step,
+                val_output_dir=val_output_dir,
             )
-            with torch.no_grad():
-                for batch_idx, (obs, target) in enumerate(val_iter):
-                    obs = obs.to(device)
-                    target = target.to(device)
-                    if epoch_output_dir is not None:
-                        loss, loss_kl, loss_integral, recon = model(
-                            obs, target, return_reconstruction=True
-                        )
-                    else:
-                        loss, loss_kl, loss_integral = model(obs, target)
-                        recon = None
-
-                    current_val_metrics = {
-                        "loss": loss.item(),
-                        "kl": loss_kl.item(),
-                        "likelihood": loss_integral.item(),
+            last_val_metrics = val_metrics
+            print(
+                json.dumps(
+                    {
+                        "epoch": epoch,
+                        "iteration": global_step,
+                        "validation": {k: float(v) for k, v in val_metrics.items()},
                     }
-                    val_running["loss"] += current_val_metrics["loss"] * obs.size(0)
-                    val_running["kl"] += current_val_metrics["kl"] * obs.size(0)
-                    val_running["likelihood"] += current_val_metrics["likelihood"] * obs.size(0)
+                )
+            )
 
-                    if show_progress:
-                        val_iter.set_postfix(
-                            {k: f"{v:.4f}" for k, v in current_val_metrics.items()}
-                        )
-
-                    if recon is not None:
-                        batch_path = epoch_output_dir / f"batch_{batch_idx:04d}.pt"
-                        torch.save(
-                            {
-                                "observations": obs.detach().cpu(),
-                                "targets": target.detach().cpu(),
-                                "reconstruction": recon.detach().cpu(),
-                            },
-                            batch_path,
-                        )
-            val_samples = len(val_loader.dataset)
-            message["validation"] = {k: v / val_samples for k, v in val_running.items()}
+        if last_val_metrics is not None:
+            message["validation"] = {k: float(v) for k, v in last_val_metrics.items()}
 
         print(json.dumps(message))
 
